@@ -1,0 +1,122 @@
+version: "3.8"
+
+services:
+
+  mysql:
+    image: mysql:8.2.0
+    container_name: mysql
+    restart: unless-stopped
+    ports:
+      - "3307:3306"
+    environment:
+      - MYSQL_DATABASE=moviesdb
+      - MYSQL_ROOT_PASSWORD=secret
+    healthcheck:
+      test: "mysqladmin ping -u root -p$${MYSQL_ROOT_PASSWORD}"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.16
+    container_name: elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: false
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    healthcheck:
+      test: "curl -f http://localhost:9200 || exit 1"
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.17.16
+    container_name: logstash
+    restart: unless-stopped
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline/
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: "curl -f http://localhost:9600 || exit 1"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.16
+    container_name: kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: "curl -f http://localhost:5601 || exit 1"
+
+  filebeat:
+    build: filebeat
+    container_name: filebeat
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/containers:/usr/share/dockerlogs/data:ro
+    depends_on:
+      - elasticsearch
+      - logstash
+
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "9090" ]
+
+  grafana:
+    image: grafana/grafana:9.5.15
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "3000" ]
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+     MONGO_INITDB_ROOT_USERNAME: root
+     MONGO_INITDB_ROOT_PASSWORD: example
+     MONGO_INITDB_DATABASE: movies
+    volumes:
+      - mongodb_data:/data/db
+
+  movies-api:
+    image: okteto/movies-api
+    container_name: movies-api
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      - MONGODB_DATABASE=movies
+      - MONGODB_USERNAME=root
+      - MONGODB_PASSWORD=example
+      - MONGODB_HOST=mongodb
+    depends_on:
+      - mongodb
+
+volumes:
+  mongodb_data:
